@@ -1,0 +1,40 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "A Data-Driven Analysis of the Global Measles Emergency"
+  navbar: 
+    left:
+     - text: Home
+       href: index.qmd
+     - about.qmd
+
+format:
+  html:
+    theme: flatly
+    toc: true
+    toc-depth: 3
+    toc-expand: 1
+    toc-title: "Contents"
+    toc-location: left
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+    css: styles.css
+    self-contained: true
+    highlight-style: github
+    page-layout: full
+    fig-align: center
+    lightbox: true
+    callout-appearance: minimal
+    hoverxref: true
+    source-embed: true
+
+editor: visual
+
+execute:
+  echo: true
+  warning: false
+  message: false
+

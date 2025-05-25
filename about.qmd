@@ -1,0 +1,11 @@
+---
+author:
+  - name: Daniel Gallardo
+    affiliations:
+      - name: Health Economics and Epidemiology, Insights, Evidence & Value Division, ICON plc.
+    email: daniel.gallardogomez200@gmail.com
+    twitter: https://twitter.com/DanielG12754470
+    github: https://github.com/dgalgom
+
+date: "`r Sys.Date()`"
+---

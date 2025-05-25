@@ -1,0 +1,1537 @@
+---
+title: "A Data-Driven Analysis of the Global Measles Emergency"
+---
+
+::: callout-caution
+In 2000, the U.S. declared measles eliminated.
+
+By 2024, it was back.
+:::
+
+# Resurgence in Red
+
+**Measles**, once nearing eradication, has resurged globally, with over 10.3 million cases and 107,500 deaths in 2023---mostly among young children. Europe saw its highest case count in 25 years in 2024, and the U.S. surpassed 1,000 cases by May 2025. This resurgence highlights the urgent need to restore high vaccination rates, as declining coverage and misinformation have weakened herd immunity.
+
+# Data
+
+First of all, let's presented the libraries we used for this data analysis.
+
+```{r, eval=FALSE}
+library(tidyverse) # data wrangling
+library(tidybayes) # predictions visualization
+library(tibble) # modern reimagining of the data.frame
+library(readr) # load .csv files
+library(rmarkdown) # table display
+library(sf) # data mapping
+library(rnaturalearth) # data linkage for map plotting
+library(rnaturalearthdata) # data linkage for map plotting
+library(rnaturalearthhires) # county- and state-level USA data
+library(tigris) # county-level data linkage
+library(plotly) # data visualization interactivity
+library(patchwork) # visualization customization
+library(ggsci) # data visualization customization
+library(brms) # Bayesian Generalized (non)-linear multivariate models
+library(mall) # LLM integration
+library(httr2) # pipeable API for working with web APIs by HTTP
+library(jsonlite) # JSON parser and generator
+```
+
+```{r, echo=FALSE}
+library(tidyverse) # data wrangling
+library(tidybayes) # predictions visualization
+library(tibble) # modern reimagining of the data.frame
+library(readr) # load .csv files
+library(rmarkdown) # table display
+library(sf) # data mapping
+library(rnaturalearth) # data linkage for map plotting
+library(rnaturalearthdata) # data linkage for map plotting
+library(rnaturalearthhires) # county-level USA data
+library(tigris) # county-level data linkage
+library(plotly) # data visualization interactivity
+library(patchwork) # visualization customization
+library(ggsci) # data visualization customization
+library(brms) # Bayesian Generalized (non)-linear multivariate models
+library(mall) # LLM integration
+library(ollamar) # Llama 3.2 LLM 
+library(httr2) # pipeable API for working with web APIs by HTTP
+library(jsonlite) # JSON parser and generator
+```
+
+Which data we are gonna use for this analysis?
+
+```{r, echo=FALSE}
+# Europe data
+europe_data <- read_csv("Measles_Europe.csv")
+
+# Global data
+global_data <- read_csv("Measles_Global.csv")
+
+# Global data - MMR coverage
+global_cov <- read_csv("Measles_vaccination_coverage_Global.csv")
+
+# USA data
+usa_data <- read_csv("measles-USA-by-year.csv")
+
+# USA data - MMR coverage
+usa_cov <- read_csv("measles-USA-by-mmr-coverage.csv")
+```
+
+### Europe data
+
+Inputs from this dataset:
+
+-   33 regions
+
+-   6 types of indicators:
+
+    -   Age standardised rate
+
+    -   Notification rate
+
+    -   Number of deaths
+
+    -   Reported confirmed cases
+
+    -   Vaccination coverage (first dose)
+
+    -   Vaccination coverage (second dose)
+
+-   3 ways of expressing these indicators:
+
+    -   Rates are expressed in number of cases per 1 million
+
+    -   Events and cases are reported as counts
+
+    -   Coverage is reported as percentage of people receiving one or two shots
+
+-   Range of time covers from 1999 up to 2023
+
+```{r, echo=FALSE}
+paged_table(europe_data[, -1], options = list(rows.print = 10, cols.print = 7))
+```
+
+### Global data
+
+This dataset contains data from 6 regions, and 194 countries from 2011 up to 2024.
+
+```{r, echo=FALSE}
+paged_table(global_data, options = list(rows.print = 10, cols.print = 16))
+```
+
+### Global data: MMR coverage
+
+This dataset offers data from 6 different regions, and 164 countries from 2011 up to 2024.
+
+```{r, echo=FALSE}
+paged_table(global_cov, options = list(rows.print = 10, cols.print = 16))
+```
+
+### USA data
+
+Data on measles cases in the USA from 1985 up to 2025.
+
+```{r, echo=FALSE}
+paged_table(usa_data, options = list(rows.print = 10, cols.print = 3))
+```
+
+### USA data: MMR coverage
+
+Data on estimated percentage of children receiving the MMR vaccine by state (53 data points) and school year (from 2009-10 to 2023-2024).
+
+```{r, echo=FALSE}
+paged_table(usa_cov, options = list(rows.print = 10, cols.print = 16))
+```
+
+# Objectives
+
+This study investigates the relationship between MMR vaccine uptake, measles incidence, and complications across time and regions, aiming to uncover the drivers behind vaccine coverage disparities and their public health impacts. Specifically, it analyzes trends in vaccination and case rates, compares outbreak dynamics in Europe and the U.S., identifies high-risk areas with low coverage, and explores the influence of social media on vaccine perceptions. The goal is to inform targeted, evidence-based strategies to increase MMR vaccination and prevent further measles resurgence.
+
+# Comparative analysis of measles case growth
+
+Through a systematic approach for data sourcing and standardization, growth rates for Europe and the U.S. were compared. For Europe, we selected the *age standardized* rates for EU/EEA including UK until 2019.
+
+```{r, echo=FALSE}
+# comparison data: Europe
+europe_comp <- europe_data %>%
+  filter(RegionName %in% c("EU/EEA (with UK until 2019)",
+                           "EU/EEA (without UK)")) %>%
+  
+  # Identify Europe + UK data until 2019 (Brexit happended on the 1st of February 2020)
+  mutate(check = case_when(
+    RegionName == "EU/EEA (with UK until 2019)" & Time < 2020 ~ 1,
+    RegionName == "EU/EEA (without UK)" & Time >= 2020 ~ 1,
+    TRUE ~ 0
+  )) %>% 
+  
+  # filter by data that meets our criteria
+  filter(check == 1 & Indicator == "Age standardised rate") %>%
+  
+  # change name to Europe
+  mutate(RegionName = "Europe") %>%
+  
+  # select variables of interest
+  select(RegionName, Time, Indicator, NumValue)
+```
+
+```{r, echo=FALSE}
+# Europe data for comparison
+europe_data %>%
+  filter(RegionName %in% c("EU/EEA (with UK until 2019)",
+                           "EU/EEA (without UK)")) %>%
+  
+  # Identify Europe + UK data until 2019 (Brexit happended on the 1st of February 2020)
+  mutate(check = case_when(
+    RegionName == "EU/EEA (with UK until 2019)" & Time < 2020 ~ 1,
+    RegionName == "EU/EEA (without UK)" & Time >= 2020 ~ 1,
+    TRUE ~ 0
+  )) %>% 
+  
+  # filter by data that meets our criteria
+  filter(check == 1 & Indicator == "Age standardised rate") %>%
+  
+  # change name to Europe
+  mutate(RegionName = "Europe") %>%
+  
+  # select variables of interest
+  select(RegionName, Time, Indicator, NumValue) %>% as.data.frame() %>%
+  paged_table()
+```
+
+Unfortunately, we had no data from 2019 onwards for Europe. For a global view of how these rates differed by country, we can create a map of Europe displaying the age standardized rates for each country by year.
+
+```{r, echo=FALSE}
+# data set generation
+# create europe sd data object collecting coordinates of each European country
+europe <- ne_countries(scale = "medium", continent = "Europe", returnclass = "sf")
+
+# data wrangling
+measles <- europe_data %>%
+  filter(Indicator == "Age standardised rate") %>%
+  group_by(RegionName, Time) %>%
+  select(RegionName, Time, Lat, Lon, NumValue)
+
+# data join
+europe_map <- europe %>%
+  left_join(measles,
+            by = c("name" = "RegionName"))
+
+# function to generate the plot interactively
+create_complete_plotly_map <- function(data) {
+  # Check for required columns
+  if(!all(c("iso_a3", "name", "Time", "NumValue") %in% colnames(as.data.frame(data)))) {
+    stop("Required columns missing. Need: iso_a3, name, Time, NumValue")
+  }
+  
+  # Convert sf object if needed
+  if(inherits(data, "sf")) {
+    # Extract coordinates for labels if needed
+    coords_data <- st_centroid(data %>%
+                                 filter(!is.na(Time))) %>%
+      st_coordinates() %>%
+      as.data.frame()
+    
+    # Combine with attribute data
+    plot_data <- cbind(
+      as.data.frame(data) %>%
+        filter(!is.na(Time)) %>%
+        select(-geometry),
+      coords_data
+    )
+  } else {
+    plot_data <- data %>% filter(!is.na(Time))
+  }
+  
+  # Get unique years
+  years <- unique(plot_data$Time)
+  
+  # Set a consistent color scale
+  max_value <- max(plot_data$NumValue, na.rm = TRUE)
+  
+  # Create the base plot
+  p <- plot_geo() %>%
+    layout(
+      title = list(
+        text = paste0("<b>Measles Age Standardised Rate</b>"),
+        font = list(family = "Arial", size = 18)
+      ),
+      geo = list(
+        scope = "europe",
+        projection = list(type = 'natural earth'),
+        showcoastlines = TRUE,
+        coastlinecolor = "rgb(150,150,150)",
+        showland = TRUE,
+        landcolor = "rgb(250,250,250)",
+        showframe = FALSE,
+        framecolor = "rgb(200,200,200)",
+        showocean = TRUE,
+        oceancolor = "rgb(230,245,255)",
+        showcountries = TRUE,
+        countrycolor = "rgb(150,150,150)",
+        countrywidth = 0.2,
+        lonaxis = list(range = c(-25, 50)),
+        lataxis = list(range = c(32, 70))
+      ),
+      margin = list(l = 20, r = 20, t = 50, b = 20),
+      hoverlabel = list(
+        bgcolor = "white",
+        font = list(family = "Arial", size = 12, color = "black"),
+        bordercolor = "gray80"
+      )
+    )
+  
+  # Add a trace for each year
+  for (i in seq_along(years)) {
+    yr <- years[i]
+    yr_data <- plot_data %>% filter(Time == yr)
+    
+    # Only show first year initially
+    visible <- if (i == 1) TRUE else FALSE
+    
+    p <- p %>% add_trace(
+      data = yr_data,
+      z = ~NumValue,
+      locations = ~iso_a3,
+      text = ~paste0(
+        "<b>", name, "</b>",
+        "<br>Rate per 1 million: <b>", round(NumValue, 2), "</b>",
+        "<br>Year: ", Time
+      ),
+      locationmode = "ISO-3",
+      colorscale = "Plasma",
+      reversescale = FALSE,
+      zmin = 0,
+      zmax = max_value, # Keep consistent color scale
+      colorbar = list(
+        title = "Rate per<br>1 million",
+        thickness = 15,
+        len = 0.5,
+        y = 0.5
+      ),
+      marker = list(
+        line = list(
+          color = 'rgb(180,180,180)',
+          width = 0.3 # Thin borders
+        )
+      ),
+      hoverinfo = "text",
+      visible = visible,
+      name = as.character(yr)
+    )
+  }
+  
+  # Create buttons for year selection
+  year_buttons <- lapply(seq_along(years), function(i) {
+    visible_list <- rep(FALSE, length(years))
+    visible_list[i] <- TRUE
+    
+    list(
+      method = "update",
+      args = list(
+        list(visible = visible_list),
+        list(title = paste0("<b>Measles Age Standardised Rate in ", years[i], "</b>"))
+      ),
+      label = as.character(years[i])
+    )
+  })
+  
+  # Add slick dropdowns and annotations
+  p <- p %>% layout(
+    updatemenus = list(list(
+      type = "dropdown",
+      active = 0,
+      buttons = year_buttons,
+      x = 0.15,
+      y = 0.9,
+      bgcolor = "#ffffff",
+      bordercolor = "#666666",
+      font = list(size = 12)
+    )),
+    annotations = list(
+      list(
+        text = "<b>Select Year:</b>",
+        x = 0.03,
+        y = 0.95,
+        xref = "paper",
+        yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 12, family = "Arial")
+      ),
+      list(
+        text = "Source: CDC Measles Data",
+        x = 0.9,
+        y = 0.02,
+        xref = "paper",
+        yref = "paper",
+        showarrow = FALSE,
+        font = list(size = 10, color = "gray60", family = "Arial"),
+        align = "right"
+      )
+    )
+  ) %>%
+  config(
+    displayModeBar = TRUE,
+    scrollZoom = TRUE,
+    modeBarButtonsToRemove = list(
+      'sendDataToCloud', 'autoScale2d', 'resetScale2d',
+      'hoverClosestCartesian', 'hoverCompareCartesian',
+      'select2d', 'lasso2d'
+    ),
+    toImageButtonOptions = list(
+      format = "png",
+      filename = "measles_map",
+      height = 1000,
+      width = 1400,
+      scale = 2
+    )
+  )
+  
+  return(p)
+}
+
+# application:
+direct_measles_map <- create_complete_plotly_map(europe_map)
+
+# final data visualization
+direct_measles_map
+```
+
+For the U.S. to obtain comparable data was a bit tricky. Since we lacked age-specific measles case data for the U.S., we adjusted crude measles rates based on changes in the U.S. age distribution over time using historical data from the U.S. Census Bureau data bank. This approach approximate age standardization when age-specific case data is unavailable.
+
+```{r, echo=FALSE}
+# first step: based on U.S Census historical data, add U.S. population for each year
+usa_comp <- usa_data %>%
+  
+  # filter by only available data
+  filter(!duplicated(year)) %>%
+  
+  # ensure ordered time
+  arrange(year) %>%
+  
+  mutate(US_pop = c(237.9, 240.1, 242.3, 244.5, 246.8,  
+                    249.6, 252.1, 254.9, 257.5, 260.3,
+                    263.0, 265.9, 268.8, 271.6, 274.9,
+                    281.4, 285.0, 288.6, 292.0, 295.5,
+                    298.4, 301.2, 304.1, 306.8, 309.3,
+                    311.6, 314.0, 316.5, 318.9, 321.4,
+                    324.1, 326.6, 329.0, 331.4, 333.3,
+                    335.9, 336.9, 338.3, 339.9, 341.4,
+                    342.8) * 1e6) %>% # Population in millions
+  
+  # second step: crude rates calculation
+  mutate(crude_rate = (cases / US_pop) * 1e6) %>%
+  
+  # third step: add age distribution proxies; we approximated the proportion of the population in high-risk groups (e.g., children) over time using U.S. Census trends and the Census Buruea's Population Estimates Program (PEP)
+  mutate(prop_young = case_when(
+    year %in% 1985:1989 ~ 0.219,
+    year %in% 1990:1994 ~ 0.206,
+    year %in% 1995:1999 ~ 0.205,
+    year %in% 2000:2004 ~ 0.218,
+    year %in% 2005:2009 ~ 0.206,
+    year %in% 2010:2014 ~ 0.201,
+    year %in% 2015:2019 ~ 0.188,
+    TRUE ~ NA_real_
+  ),
+  
+  # fourth step: age-adjusted rate calculation
+  adj_rate = crude_rate / prop_young) %>%
+  
+  # set up similar data frame structure than *europe_comp*
+  mutate(RegionName = "USA",
+         Indicator = "Age-adjusted rate") %>%
+  rename(Time = year,
+         NumValue = adj_rate) %>%
+  
+  # filter by the years of interest for comparability
+  filter(Time > 2006) %>%
+  
+  # select variables of interest
+  select(RegionName, Time, Indicator, NumValue)
+  
+```
+
+```{r, eval=FALSE}
+# first step: based on U.S Census historical data, add U.S. population for each year
+usa_data %>%
+  
+  # filter by unique years (we identified that data from 2000 onwards were duplicated)
+  filter(!duplicated(year)) %>%
+  
+  # ensure ordered time
+  arrange(year) %>%
+  
+  mutate(US_pop = c(237.9, 240.1, 242.3, 244.5, 246.8,  
+                    249.6, 252.1, 254.9, 257.5, 260.3,
+                    263.0, 265.9, 268.8, 271.6, 274.9,
+                    281.4, 285.0, 288.6, 292.0, 295.5,
+                    298.4, 301.2, 304.1, 306.8, 309.3,
+                    311.6, 314.0, 316.5, 318.9, 321.4,
+                    324.1, 326.6, 329.0, 331.4, 333.3,
+                    335.9, 336.9, 338.3, 339.9, 341.4,
+                    342.8) * 1e6) %>% # Population in millions
+  
+  # second step: crude rates calculation
+  mutate(crude_rate = (cases / US_pop) * 1e6) %>%
+  
+  # third step: add age distribution proxies; we approximated the proportiong of the population in high-risk groups (e.g., children) over time using U.S. Census trends and the Census Buruea's Population Estimates Program (PEP)
+  mutate(prop_young = case_when(
+    year %in% 1985:1989 ~ 0.219,
+    year %in% 1990:1994 ~ 0.206,
+    year %in% 1995:1999 ~ 0.205,
+    year %in% 2000:2004 ~ 0.218,
+    year %in% 2005:2009 ~ 0.206,
+    year %in% 2010:2014 ~ 0.201,
+    year %in% 2015:2019 ~ 0.188,
+    TRUE ~ NA_real_
+  ),
+  
+  # fourth step: age-adjusted rate calculation
+  adj_rate = crude_rate / prop_young)
+```
+
+The resulted data frame:
+
+```{r, echo=FALSE}
+# first step: based on U.S Census historical data, add U.S. population for each year
+usa_data %>%
+  
+  # filter by only available data
+  filter(!duplicated(year)) %>%
+  
+  # ensure ordered time
+  arrange(year) %>%
+  
+  mutate(US_pop = c(237.9, 240.1, 242.3, 244.5, 246.8,  
+                    249.6, 252.1, 254.9, 257.5, 260.3,
+                    263.0, 265.9, 268.8, 271.6, 274.9,
+                    281.4, 285.0, 288.6, 292.0, 295.5,
+                    298.4, 301.2, 304.1, 306.8, 309.3,
+                    311.6, 314.0, 316.5, 318.9, 321.4,
+                    324.1, 326.6, 329.0, 331.4, 333.3,
+                    335.9, 336.9, 338.3, 339.9, 341.4,
+                    342.8) * 1e6) %>% # Population in millions
+  
+  # second step: crude rates calculation
+  mutate(crude_rate = (cases / US_pop) * 1e6) %>%
+  
+  # third step: add age distribution proxies; we approximated the proportiong of the population in high-risk groups (e.g., children) over time using U.S. Census trends and the Census Buruea's Population Estimates Program (PEP)
+  mutate(prop_young = case_when(
+    year %in% 1985:1989 ~ 0.219,
+    year %in% 1990:1994 ~ 0.206,
+    year %in% 1995:1999 ~ 0.205,
+    year %in% 2000:2004 ~ 0.218,
+    year %in% 2005:2009 ~ 0.206,
+    year %in% 2010:2014 ~ 0.201,
+    year %in% 2015:2019 ~ 0.188,
+    TRUE ~ NA_real_
+  ),
+  
+  # fourth step: age-adjusted rate calculation
+  adj_rate = crude_rate / prop_young) %>%
+  
+  # set up similar data frame structure than *europe_comp*
+  mutate(RegionName = "USA",
+         Indicator = "Age-adjusted rate") %>%
+  rename(Time = year,
+         NumValue = adj_rate) %>%
+  
+  # filter by the years of interest for comparability
+  filter(Time > 2006) %>%
+  
+  # select variables of interest
+  select(RegionName, Time, Indicator, NumValue) %>%
+  paged_table()
+```
+
+Neat! We have now comparable data. However, we are interested in growth rates. Based on epidemiological evidence, one of the most straightforward ways of calculating disease growth rates is:
+
+$Growth Rate_{t2} = \frac{Rate_{t2} - Rate_{t1}}{Rate_{t1}}$
+
+The plain interpretation of this growth rate is how much the rate has increased or decreased relative to the previous year. After these calculations, we will visualize these estimates over time grouped by region of interest (Europe vs. the U.S.).
+
+```{r, eval=FALSE}
+europe_comp %>%
+  
+  # merge both datasets
+  rbind(usa_comp) %>%
+  
+  # ensure the data is in the correct chronological order
+  arrange(RegionName, Time) %>%
+  
+  # to compute growth rates within each region
+  group_by(RegionName) %>%
+  
+  # calculates the growth rate using the formula
+  mutate(growth_rate = (NumValue - lag(NumValue)) / lag(NumValue)) %>%
+  
+  # create variable indicating the time frame where the growth rate was observed
+  mutate(time_frame = paste0(lag(Time), "-", Time))
+```
+
+```{r, echo=FALSE}
+# Growth rate calculation and visualization
+europe_comp %>%
+  
+  # merge both datasets
+  rbind(usa_comp) %>%
+  
+  # ensure the data is in the correct chronological order
+  arrange(RegionName, Time) %>%
+  
+  # to compute growth rates within each region
+  group_by(RegionName) %>%
+  
+  # calculates the growth rate using the formula
+  mutate(growth_rate = (NumValue - lag(NumValue)) / lag(NumValue)) %>%
+  
+  # create variable indicating the time frame where the growth rate was observed
+  mutate(time_frame = paste0(lag(Time), "-", Time)) %>%
+  
+  # keep the non-missing data
+  filter(!is.na(growth_rate)) %>%
+  
+  # select variables of interest 
+  select(RegionName, Time, NumValue, growth_rate, time_frame) %>%
+  
+  ungroup() %>%
+  paged_table()
+```
+
+```{r, echo=FALSE, fig.width=10, fig.height=8}
+# plot!
+comp_plot <- europe_comp %>%
+  
+  # merge both datasets
+  rbind(usa_comp) %>%
+  
+  # ensure the data is in the correct chronological order
+  arrange(RegionName, Time) %>%
+  
+  # to compute growth rates within each region
+  group_by(RegionName) %>%
+  
+  # calculates the growth rate using the formula
+  mutate(growth_rate = (NumValue - lag(NumValue)) / lag(NumValue)) %>%
+  
+  # create variable indicating the time frame where the growth rate was observed
+  mutate(time_frame = paste0(lag(Time), "-", Time)) %>%
+  
+  # keep the non-missing data
+  filter(!is.na(growth_rate)) %>%
+  
+  # select variables of interest 
+  select(RegionName, Time, NumValue, growth_rate, time_frame) %>%
+  
+  ungroup() %>%
+  
+  # specific mutation for plotly
+  mutate(growth_rate = round(growth_rate, 3)) %>%
+  rename(`Time Frame` = time_frame,
+         `Growth Rate` = growth_rate,
+         Region = RegionName) %>%
+  
+  ggplot(aes(x = `Time Frame`, y = `Growth Rate`, group = Region)) +
+  geom_hline(yintercept = 0, linewidth = 1, linetype = 2, col = "#f7d794", alpha = 0.4) +
+  geom_point(aes(col = Region), size = 4) +
+  geom_line(aes(col = Region), linewidth = 2.5, alpha = 0.8) +
+  scale_color_manual(values = c("#78e08f", "#b71540")) +
+  theme_dark() +
+  labs(x = "Time Frames",
+       y = "Relative (%) Growth Rate",
+       subtitle = "Plain interpretation: how much the rate has increased or decreased relative to the previous year",
+       col = "Region") +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4),
+                     labels = c("-1", "No\nchange", "1", "2", "3", "4"))
+
+# interactivity implementation
+  ggplotly(comp_plot,
+  tooltip = c("x", "y", "color")
+) %>%
+  layout(
+    hoverlabel = list(bgcolor = "white", font = list(size = 14)),
+    legend = list(orientation = "h", y = -0.4),
+    xaxis = list(rangeslider = list(visible = TRUE))  # Add a range slider for zooming
+  ) %>%
+  config(displayModeBar = TRUE)
+```
+
+This plot reveals several key epidemiological patterns: measles growth in Europe and the U.S. follows cyclical, outbreak-driven trends, with Europe showing sharp spikes in 2009--2010 and 2016--2017. While the regions occasionally align, they often diverge, reflecting differing local factors. The U.S. saw a sustained rise in cases from 2011--2014, contrasting with Europe's volatility. Periods of negative growth suggest effective control or natural decline in outbreaks. Notably, from 2017--2019, U.S. cases rose again---likely tied to increasing vaccine hesitancy---while Europe's rates declined, possibly due to more successful interventions. Overall, the trends underscore the impact of vaccination coverage and public health responses.
+
+# Pinpointing peril: where are the at-risk regions?
+
+Our quest to identify at-risk regions begins in Europe, where we wield the twin lenses of first-dose (MCV1) and second-dose (MCV2) MMR vaccination coverage to reveal pockets of vulnerability.
+
+Our journey begins with a **global lens**, assessing measles vaccination coverage across countries to identify regions where immunity is weakening and outbreaks loom. Armed with data on **first-dose (MCV1) and second-dose (MCV2) MMR coverage**, we classify risk setting up a risk scoring system grounded in epidemiological evidence.
+
+$Risk = (1- \frac{MCV1}{100})*0.6+(1-\frac{MCV2}{100})*0.4$
+
+MCV1 was weighted more heavily, as it captures the bulk of immunization impact. The interpretation for this risk score would be that scores near 0 means low risk, and scores near 1 means high risk.
+
+```{r, echo=FALSE}
+# data generation
+global_risk <- global_cov %>%
+  select(Region, Country, Year, 
+         Antigen, Coverage) %>%
+  filter(!is.na(Coverage)) %>%
+  filter(!is.na(Antigen)) %>%
+  pivot_wider(names_from = Antigen,
+              values_from = Coverage,
+              names_prefix = "antigen_") %>%
+  
+  # create a continuous risk score to reflect gradient risk, 
+  mutate(risk_score = (1 - antigen_MCV1/100) * 0.6 + (1 - antigen_MCV2/100) * 0.4) 
+```
+
+```{r, echo=FALSE}
+# Function to create global risk score visualization
+create_global_risk_score_map <- readRDS("function_map_risk.rds")
+
+# # Create the visualization
+create_global_risk_score_map(global_risk)
+```
+
+For a tabular vision of these data, we can extract the 10 most at-risk countries by year based on our generated risk score.
+
+```{r, echo=FALSE}
+# data set
+global_risk %>%
+  arrange(Year, desc(risk_score), Country) %>%
+  group_by(Year) %>%
+  filter(!is.na(risk_score)) %>%
+  slice_head(n = 10) %>%
+  select(Country, Year, antigen_MCV1, antigen_MCV2, risk_score) %>%
+  rename(MCV1 = antigen_MCV1,
+         MCV2 = antigen_MCV2,
+         `Risk score` = risk_score) %>%
+  paged_table()
+```
+
+For instance, in 2015 the 10 most at-risk countries globally were Malawi (risk score = 0.452), Kenya, Ukraine, Angola, Niger, Lesotho, Paraguay, Yemen, Syrian Arab Republic, and Indonesia (risk score = 0.323), respectively.
+
+Turning our focus to the U.S., we refine our analysis to the state level, where policy decisions and healthcare access create stark disparities in vaccine coverage. Since U.S. data often provides aggregate MMR estimates in children population rather than dose metrics, we adapted our approach plotting the estimated coverage percentage by county and year.
+
+```{r}
+### STATE_LEVEL (our usa_cov data is at this level)
+# Get U.S. states data with FIPS codes
+states_data <- ne_states(country = "United States of America", returnclass = "sf") %>%
+  filter(iso_a2 == "US") %>%  # Filter for only U.S. states
+  select(
+    state = name,           # Full state name
+    state_abbr = postal,     # State abbreviation
+    fips = fips             # State FIPS code
+  ) %>%
+  st_drop_geometry() %>%    # Remove geometry column
+  arrange(state)            # Sort alphabetically
+
+# data join
+states_df <- states_data %>%
+  left_join(usa_cov, by = c("state" = "geography")) %>%
+  mutate(estimate_pct = as.numeric(sub("%", "", estimate_pct))) %>%
+  filter(!is.na(estimate_pct))
+
+
+# function to create data visualizations
+create_us_vaccine_coverage_map <- function(data) {
+  
+  # Check required columns
+  if (!all(c("state_abbr", "state", "school_year", "estimate_pct") %in% colnames(as.data.frame(data)))) {
+    stop("Required columns missing. Need: state_abbr, state, school_year, estimate_pct")
+  }
+
+  # Ensure school_year is character
+  data$school_year <- as.character(data$school_year)
+
+  # Convert sf object if needed
+  if (inherits(data, "sf")) {
+    coords_data <- st_centroid(data %>% filter(!is.na(school_year))) %>%
+      st_coordinates() %>%
+      as.data.frame()
+
+    plot_data <- cbind(
+      as.data.frame(data) %>%
+        filter(!is.na(school_year)) %>%
+        select(-geometry),
+      coords_data
+    )
+  } else {
+    plot_data <- data %>% filter(!is.na(school_year))
+  }
+
+  # Sort school years
+  school_years <- unique(plot_data$school_year)
+  first_years <- as.numeric(substr(school_years, 1, 4))
+  school_years <- school_years[order(first_years)]
+
+  # Create base plot
+  p <- plot_ly()
+
+  # Add each year's data as a trace
+  for (i in seq_along(school_years)) {
+    yr <- school_years[i]
+    yr_data <- plot_data %>% filter(school_year == yr)
+
+    trace <- list(
+      type = "choropleth",
+      locationmode = "USA-states",
+      locations = yr_data$state_abbr,
+      z = yr_data$estimate_pct,
+      text = paste0(
+        "<b>", yr_data$state, "</b>",
+        "<br>Vaccination Coverage: <b>", round(yr_data$estimate_pct, 1), "%</b>",
+        "<br>School Year: ", yr_data$school_year
+      ),
+      colorscale = "Viridis",
+      reversescale = FALSE,
+      zmin = min(plot_data$estimate_pct, na.rm = TRUE),
+      zmax = 100,
+      colorbar = list(
+        title = "Vaccination<br>Coverage (%)",
+        thickness = 15,
+        len = 0.5,
+        y = 0.5
+      ),
+      marker = list(line = list(color = 'rgb(180,180,180)', width = 0.3)),
+      hoverinfo = "text",
+      visible = ifelse(i == length(school_years), TRUE, FALSE),
+      name = yr
+    )
+
+    # Add the trace using do.call
+    p <- do.call(add_trace, c(list(p), trace))
+  }
+
+  # Dropdown menu for year selection
+  year_buttons <- lapply(seq_along(school_years), function(i) {
+    visible_vec <- rep(FALSE, length(school_years))
+    visible_vec[i] <- TRUE
+
+    list(
+      method = "update",
+      args = list(
+        list(visible = visible_vec),
+        list(title = paste0("<b>Vaccine Coverage by State in School Year ", school_years[i], "</b>"))
+      ),
+      label = school_years[i]
+    )
+  })
+
+  # Final layout
+  p <- p %>%
+    layout(
+      title = list(
+        text = paste0("<b>Vaccine Coverage by State in School Year ", school_years[length(school_years)], "</b>"),
+        font = list(family = "Arial", size = 18)
+      ),
+      geo = list(
+        scope = "usa",
+        projection = list(type = 'albers usa'),
+        showcoastlines = TRUE,
+        coastlinecolor = "rgb(150,150,150)",
+        showland = TRUE,
+        landcolor = "rgb(250,250,250)",
+        showframe = FALSE,
+        framecolor = "rgb(200,200,200)",
+        showlakes = TRUE,
+        lakecolor = "rgb(230,245,255)",
+        showsubunits = TRUE,
+        subunitcolor = "rgb(150,150,150)",
+        subunitwidth = 0.5
+      ),
+      updatemenus = list(list(
+        type = "dropdown",
+        active = length(school_years) - 1,
+        buttons = year_buttons,
+        x = 0.15,
+        y = 0.9,
+        bgcolor = "#ffffff",
+        bordercolor = "#666666",
+        font = list(size = 12)
+      )),
+      annotations = list(
+        list(
+          text = "<b>Select School Year:</b>",
+          x = 0.03, y = 0.95, xref = "paper", yref = "paper",
+          showarrow = FALSE, font = list(size = 12, family = "Arial")
+        ),
+        list(
+          text = "Source: CDC Vaccination Data",
+          x = 0.9, y = 0.02, xref = "paper", yref = "paper",
+          showarrow = FALSE,
+          font = list(size = 10, color = "gray60", family = "Arial"),
+          align = "right"
+        )
+      ),
+      margin = list(l = 20, r = 20, t = 50, b = 20),
+      hoverlabel = list(
+        bgcolor = "white",
+        font = list(family = "Arial", size = 12, color = "black"),
+        bordercolor = "gray80"
+      )
+    ) %>%
+    config(
+      displayModeBar = TRUE,
+      scrollZoom = TRUE,
+      modeBarButtonsToRemove = list(
+        'sendDataToCloud', 'autoScale2d', 'resetScale2d',
+        'hoverClosestCartesian', 'hoverCompareCartesian',
+        'select2d', 'lasso2d'
+      ),
+      toImageButtonOptions = list(
+        format = "png",
+        filename = "vaccine_coverage_map",
+        height = 1000,
+        width = 1400,
+        scale = 2
+      )
+    )
+
+  return(p)
+}
+
+# plot!
+create_us_vaccine_coverage_map(states_df)
+```
+
+Recent reports from state health departments and national outlets (e.g., *CDC*, or *The Washington Post*) show that measles cases in 2025 are concentrated in U.S. states with historically low vaccination coverage. This reinforces the strong link between immunization gaps and outbreak risk. States like Alaska, California, Georgia, and Texas---each facing challenges such as rural access issues, exemption clusters, rising nonmedical exemptions, or vaccine hesitancy---had MMR coverage below the 95% threshold before 2025, placing them in the high-risk category identified in earlier analyses.
+
+```{r, echo=FALSE}
+# table
+states_df %>%
+  filter(state %in% c("Alaska",
+                      "Georgia",
+                      "Rhode Island",
+                      "Texas",
+                      "New Jersey",
+                      "New York",
+                      "California",
+                      "Washington")) %>%
+  filter(estimate_pct < 95) %>%
+  select(state, school_year, estimate_pct) %>%
+  rename(State = state, 
+         `School Year` = school_year,
+         `MMR coverage` = estimate_pct) %>%
+  paged_table()
+```
+
+# Time's tale: how vaccination rates have evolved
+
+This section examines how vaccination rates have evolved over time. Due to the lack of directly available national data for the U.S., we estimated coverage using a population-weighted average of state-level figures. For global analysis, only complete records for MCV1, MCV2, and measles case counts were included, without imputation. The final dataset combines these global records with the U.S. national estimates.
+
+```{r, eval=FALSE}
+# U.S. national coverage data
+states_df %>% 
+  
+  # group by year
+  group_by(school_year) %>% 
+  
+  # add up the population-weighted average
+  summarise(average_w = sum(estimate_pct * population_size, na.rm = TRUE) / sum(population_size, na.rm = TRUE)) %>%
+  
+  # create USA country 
+  mutate(Country = "USA",
+         
+         # adjusting year to the second school year
+         school_year = as.numeric(substr(school_year, 1, 4)) + 1) %>%
+  
+  # data customization
+  rename(Year = school_year,
+         antigen_MCV1 = average_w) %>%
+  select(Country, Year, antigen_MCV1) %>%
+  
+  # join measles cases data
+  left_join(usa_data %>% select(year, cases),
+            by = c("Year" = "year")) %>%
+  
+  # remove duplicate years
+  filter(!duplicated(Year)) 
+```
+
+```{r, echo=FALSE}
+# U.S. national coverage data
+usa_cov_national <- states_df %>% 
+  group_by(school_year) %>% 
+  summarise(average_w = sum(estimate_pct * population_size, na.rm = TRUE) / sum(population_size, na.rm = TRUE)) %>%
+  mutate(Country = "USA",
+         school_year = as.numeric(substr(school_year, 1, 4)) + 1) %>%
+  rename(Year = school_year,
+         antigen_MCV1 = average_w) %>%
+  select(Country, Year, antigen_MCV1) %>%
+  left_join(usa_data %>% select(year, cases),
+            by = c("Year" = "year")) %>%
+  filter(!duplicated(Year)) 
+```
+
+```{r,echo=FALSE}
+# U.S. national coverage data
+usa_cov_national %>%
+  rename(Coverage = antigen_MCV1,
+         Cases = cases) %>%
+  paged_table()
+```
+
+Now, we join U.S. national data with global data.
+
+```{r, eval=FALSE}
+# final data set including country, year, first-dose MMR coverage, second-dose MMR coverage and number of cases
+
+# keep only complete cases
+global_data[complete.cases(global_data), ] %>%
+  
+  # calculation of total number of yearly cases
+  mutate(cases = rowSums(global_data[complete.cases(global_data), c("January", "February", "March", "April", 
+                           "May", "June", "July", "August", 
+                           "September", "October", "November", "December")], 
+                    na.rm = TRUE)) %>%
+  select(Country, Year, cases) %>%
+  
+  # join to the previous width-format dataset
+  left_join(global_risk, by = c("Country", "Year")) %>%
+  
+  # join U.S. national data
+  full_join(usa_cov_national) %>%
+  
+  # create a new variable centering the year for modelling efficiency
+  mutate(year_cen = Year - min(Year)) %>%
+  select(Country, Year, year_cen, antigen_MCV1, antigen_MCV2, cases)
+```
+
+```{r, echo=FALSE}
+# final data set including country, year, first-dose MMR coverage, second-dose MMR coverage and number of cases
+model_data <- global_data[complete.cases(global_data), ] %>%
+  mutate(cases = rowSums(global_data[complete.cases(global_data), c("January", "February", "March", "April", 
+                           "May", "June", "July", "August", 
+                           "September", "October", "November", "December")], 
+                    na.rm = TRUE)) %>%
+  select(Country, Year, cases) %>%
+  left_join(global_risk, by = c("Country", "Year")) %>%
+  full_join(usa_cov_national) %>%
+  mutate(covid = ifelse(Year > 2019, 1, 0),
+         year_cen = Year - min(Year)) %>%
+  select(Country, Year, year_cen, antigen_MCV1, antigen_MCV2, covid, cases)
+```
+
+```{r, echo=FALSE}
+model_data %>%
+  rename(`Year centered` = year_cen,
+         MCV1 = antigen_MCV1,
+         MCV2 = antigen_MCV2,
+         Cases = cases) %>%
+  paged_table()
+```
+
+To ensure model convergence and robust global representation, we applied the following refinements:
+
+-   Prioritized high-impact countries: focused on nations with high disease burden, recent outbreaks, or strategic importance in global immunization efforts to improve model generalizability.
+
+-   Outlier exclusion: removed countries reporting case counts above the 98th percentile to prevent overdispersion in posterior estimates.
+
+```{r}
+# countries' selection
+selected_countries <- c(
+  # Africa
+  "Nigeria",
+  "Democratic Republic of the Congo",
+  "Ethiopia",
+  "Kenya",
+  "South Africa",
+  
+  # America
+  "Brazil",
+  "USA",
+  "Mexico",
+  "Cuba",
+  "Argentina",
+  
+  # Asia
+  "India",
+  "Pakistan",
+  "Bangladesh",
+  "Indonesia",
+  "China",
+  
+  # Europe
+  "Ukraine",
+  "Romania",
+  "France",
+  "United Kingdom of Great Britain and Northern Ireland",
+  "Germany",
+  
+  # Oceania
+  "Papua New Guinea",
+  "Australia",
+  "Fiji",
+  "New Zealand",
+  "Philippines"
+)
+
+# outliers detection and remove
+outlier_threshold <- as.numeric(quantile(model_data %>% filter(!is.na(cases)) %>% .$cases, probs = 0.98))
+
+
+# final dataset used for modelling
+model_data <- model_data %>%
+  
+  # countries selection
+  filter(Country %in% selected_countries) %>%
+  
+  # outlier threshold application
+  filter(cases < outlier_threshold)
+```
+
+Great. After, initial examination revealed that the distribution of MCV1 and MCV2 coverage were approximately normally distributed, supporting the use of parametric modelling approaches.
+
+To analyse these coverage trends over time, we employed a Bayesian GLM with hierarchical structure to account for year-specific effects (temporal trends) and heterogeneity across countries (country-specific random slopes and intercepts). This approach allowed us to (1) estimate vaccination coverage trends while adjusting for between-country variability, and (2) incorporate uncertainty in a main principled manner through posterior distributions.
+
+```{r, message=FALSE, results='hide', warning=FALSE, eval=FALSE}
+### COVERAGE MODEL OVER TIME
+# model with multilevel terms (this model showed better model fit parameters than simplier models)
+model_cov_multi <- brm(bf(antigen_MCV1 ~ year_cen + (1 | year_cen) + (1 + year_cen | Country)),
+                          data = model_data,
+                          family = gaussian(),
+                          chains = 4,
+                          iter = 2000,
+                          seed = 1234)
+```
+
+```{r, echo=FALSE}
+model_cov_multi <- readRDS("model_coverage.rds")
+```
+
+Next, we have to check if the model reached the convergence. One simple way of checking this is by plotting the trace plots for each model parameter (i.e., great overlapping of the chains mean that model has converged), and by visualizing posterior predictive draws vs. observed data points.
+
+```{r}
+# posterior checks
+pp_check(model_cov_multi, ndraws = 100)
+```
+
+Predicted responses followed similar patterns than observed data, which is a good signal for estimating robust posterior predictions.
+
+The parameter of interest here is `^b_year_cen` which represents the beta coefficient of the time in our model; i.e., how much % of MCV1 coverage increases or decreases by +1 year. Let's extract 4,000 random draws of this model parameter and plot them to observe its distribution.
+
+```{r}
+# extract random draws from our model
+draws <- posterior_samples(model_cov_multi,
+                           pars = "b_year_cen")
+
+# plot!
+ggplot(aes(x = b_year_cen), data = draws) +
+  geom_vline(xintercept = 0, linetype = 2, col = "gray20", alpha = .8) +
+  geom_density(fill = "lightblue", col = "lightblue", alpha = 0.6) + 
+  geom_point(y = 0, x = mean(draws$b_year_cen),
+             size = 3) +
+  labs(x = expression(beta~"coefficient of year"),
+       y = "Density") +
+  theme_minimal()
+```
+
+Although the distribution includes zero, it is predominantly skewed toward negative values. This suggests that as time progresses---reflected by the inclusion of additional years in the regression model---the trend is generally downward, indicating a decline in vaccination coverage over time.
+
+The fact that Bayesian methods create an actual sampling distribution for our parameters of interest means that we can calculate the exact probabilities that this coefficient would be smaller than 0, indicating a negative trend towards vaccination over time. This can be done by looking at the empirical cumulative distribution function (ECDF). This function lets us select one specific value *X*, and returns the probability of some value *x* being smaller than *X* based on provided data.
+
+```{r}
+# create the ECDF
+year.ecdf <- ecdf(draws$b_year_cen)
+
+# calculate probabilities for values smaller than 0
+year.ecdf(0)
+```
+
+With roughly 90%, the probability of our values for this parameter being smaller than 0 is high, suggesting an overall negative vaccination trend over time.
+
+In addition, we can predict the MCV1 coverage for specific countries from this model.
+
+```{r, echo=FALSE}
+pred_model_country_year <- readRDS("pred_cov.rds")
+```
+
+```{r, echo=FALSE}
+# plot
+library(ggtext)
+pred_model_country_year %>%
+ggplot(aes(x = year, y = .epred)) +
+  geom_hline(yintercept = 95, col = "#009E73", size = 0.8, linetype = 2, alpha = .9) +
+  geom_point(data = model_data %>%
+               filter(Country %in% c("Bangladesh", "Brazil", "Papua New Guinea", "Romania")), 
+             aes(x = Year, y = antigen_MCV1), col = "grey50", size = 3, alpha = .5) +
+  stat_lineribbon(alpha = 0.5) +
+  scale_fill_brewer(palette = "Reds") +
+  scale_x_continuous(breaks = seq(2010, 2026, 2)) +
+  scale_y_continuous(breaks = seq(0, 125, 25)) +
+  theme_light() +
+  facet_wrap(~ Country) +
+  labs(x = "Year",
+       y = "Predicted MCV1 Coverage",
+       fill = "95% Credible Interval",
+       subtitle = "<span style='color:#009E73;'>Green</span> line indicates 95% Coverage") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, hjust = .5, vjust = .5),
+        plot.subtitle = element_markdown())
+```
+
+For example, for Bangladesh we can observe just not that has kept MCV1 vaccination coverage above 95%, but also presents an increased trend towards vaccination. Conversely, the opposite was observed for countries like Brazil, Papua New Guinea, and Romania.
+
+# Future's forecast: projecting measles cases by 2026
+
+Accurately predicting the number of cases for a highly contagious disease like measles is fraught with challenges, as incidence hinges on a complex interplay of demographic, environmental, and behavioral factors---many of which are volatile or context-dependent. Nevertheless, leveraging observed historical data, we developed a robust statistical approach to project measles cases for 2026, prioritizing transparency in uncertainty.
+
+Using a **Bayesian hurdle negative binomial model**, we accounted for the unique distribution of our outcome (count data with a relatively high number of zero cases). This framework combines two components:
+
+1.  **The non-zero part (`mu`)**: A negative binomial model predicting case counts where measles occurs.
+
+2.  **The zero part (`hu`)**: A logistic regression estimating the probability of observing zero cases in a given year and country.
+
+```{r, eval=FALSE}
+# model with multilevel terms
+model_cases_multi <- brm(bf(cases ~ year_cen + (1 | year_cen) + (1 + year_cen | Country),
+                             hu ~ year_cen),
+                          data = model_data,
+                          family = hurdle_negbinomial(),
+                          chains = 4,
+                          iter = 2000,
+                          seed = 1234)
+```
+
+```{r, echo=FALSE}
+model_cases_multi <- readRDS("model_cases.rds")
+```
+
+```{r, error=FALSE, message=FALSE, warning=FALSE}
+## logged posterior predictions
+pred <- posterior_predict(model_cases_multi)
+
+## plot predicted vs. observed data 
+bayesplot::ppc_dens_overlay(y = log1p(model_data %>% filter(!is.na(cases)) %>% .$cases),
+                            yrep = log1p(pred[1:10, ]))
+```
+
+After validating that the model captured observed trends, conditional effects for the `hu` part of our model were extracted; and therefore, that allowed us to visualize the probabilities of seeing 0 cases over the years globally.
+
+```{r}
+# conditional effects
+cond_effects <- conditional_effects(model_cases_multi,
+                    dpar = "hu") 
+
+# plot!
+cond_effects$year_cen %>%
+  ggplot(aes(x = year_cen + 2010, y = estimate__)) +
+  geom_lineribbon(aes(ymax = upper__,
+                      ymin = lower__),
+                  alpha = .6, fill = "steelblue") +
+  labs(x = "Year",
+       y = "Predicted probability of seeing 0 measles cases") +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(2010, 2026, 2)) +
+  scale_y_continuous(labels = scales::label_percent())
+```
+
+Over time, the rising likelihood of zero cases reflects progress in measles containment efforts worldwide.
+
+Next, we generated projections for the focal countries. Our results, presented below, reflect both median predictions and 95% Credible Intervals (95% CrI) to underscore the inherent uncertainty in forecasting infectious disease dynamics.
+
+```{r, echo=FALSE}
+library(DT)
+library(marginaleffects)
+```
+
+```{r}
+# data frame of predictions for 2026
+table_df <- model_cases_multi %>%
+  predictions(newdata = datagrid(year_cen = 16,
+                                 Country = unique(model_data$Country)), 
+              # allow new levels (2026)
+              allow_new_levels = TRUE) %>% as.data.frame() %>%
+  mutate_if(is.numeric, round, 0) %>%
+  select(Country, estimate, conf.low, conf.high) %>%
+  rename(`Predicted cases` = estimate,
+         `Lower bound (95% CrI)` = conf.low,
+         `Upper bound (95% CrI)` = conf.high) %>%
+  arrange(Country)
+
+# Granular color variation
+quantiles <- quantile(table_df$`Predicted cases`, probs = c(0.25, 0.5, 0.75))
+
+# table
+DT::datatable(table_df) %>%
+  formatStyle(
+    'Predicted cases',
+    backgroundColor = styleInterval(
+      quantiles, 
+      c('#FFCCCB', '#FF9999', '#FF6666', '#CC0000')  # Light to dark red gradient
+    ),
+    color = styleInterval(
+      quantiles[1:2], 
+      c('black', 'black', 'white')
+    )
+  )
+```
+
+Estimates had associated large uncertainty as we expected.
+
+For the sake of file size control, we cannot present here our model with MCV1 and MCV2 coverage as predictors. However, while **MCV1 coverage showed no significant association with reduced case counts over time**, **MCV2 coverage emerged as a critical protective factor**---highlighting the importance of second-dose vaccination campaigns in outbreak mitigation.
+
+# Digital echoes: social media's sway on vaccine views
+
+The rise of social media has transformed public discourse around vaccination, amplifying both evidence-based advocacy and vaccine hesitancy. To quantify these dynamics, we extracted public posts discussing vaccines---including vaccine, COVID-19, and measles---from **Reddit** via its API. For each subreddit topic we extracted 100 random posts.
+
+```{r, echo=FALSE}
+# ---- Your Reddit App Credentials ----
+client_id <- "pdLe8qrK8y3KUpQqFMH63A"
+client_secret <- "gRE6tl_S5ahYX2I5IF3Od29yO7fusA"
+username <- "Southern_Athlete8281"
+password <- "Marina04111996"
+
+# ---- Get Access Token ----
+auth_resp <- request("https://www.reddit.com/api/v1/access_token") |>
+  req_headers("User-Agent" = "reddit-covid-vaccine-research/0.1") |>
+  req_auth_basic(client_id, client_secret) |>
+  req_body_form(
+    grant_type = "password",
+    username = username,
+    password = password
+  ) |>
+  req_perform()
+
+# ---- Access Token ----
+access_token <- resp_body_json(auth_resp)$access_token
+```
+
+```{r, eval=FALSE}
+# query Reddit's search endpoint
+search_url <- "https://oauth.reddit.com/r/Measles/search" #also scrapped r/Vaccines and r/COVID19
+
+# proceed with the request
+req <- request(search_url) %>%
+  req_headers(
+    "Authorization" = paste("bearer", access_token),
+    "User-Agent" = "reddit-covid-vaccine-research/0.1"
+  ) %>%
+  req_url_query(
+    q = "measles vaccine", # also "COVID-19" and "vaccines"
+    sort = "old",
+    limit = 100
+  ) %>%
+  req_perform()
+
+# parse results
+results <- resp_body_json(req)$data$children
+
+# extract and normalize data
+posts_df <- purrr::map_dfr(results, function(post) {
+  data <- post$data
+  
+  tibble(
+    title = data$title %||% NA_character_,
+    selftext = data$selftext %||% NA_character_,
+    score = data$score %||% NA_integer_,
+    author = data$author %||% NA_character_,
+    created_utc = data$created_utc %||% NA_real_,
+    permalink = data$permalink %||% NA_character_
+  )
+}) %>%
+  mutate(
+    created = as.POSIXct(created_utc, origin = "1970-01-01", tz = "UTC"),
+    url = paste0("https://reddit.com", permalink)
+  ) %>%
+  mutate(created = as.Date.POSIXct(created))
+```
+
+The resulted output looks like this:
+
+```{r, echo=FALSE}
+posts_df <- readRDS("posts_df.rds")
+```
+
+```{r, echo=FALSE}
+posts_df %>%
+  paged_table(options = list(rows.print = 10, cols.print = 3))
+```
+
+Using Large Language Models (LLMs) such as **Llama 3.2**, we classified each post (title and body text) into three categories: **pro-vaccine**, **vaccine-hesitant**, or **neutral**, enabling a data-driven analysis of sentiment trends over time. For *vaccines*, and *COVID-19*, we focus on the body text of the post since we have more available data points. For *measles vaccine*, we used the title of the post for sentiment classification. At the end of this process, 136 posts were analysed.
+
+```{r, eval=FALSE}
+# prompt specification for LLM call
+prompt <- paste0(
+  "Answer a question.",
+  "Return only the answer, no explanation",
+  "Acceptable answers are 'Pro-vaccine', 'Vaccine-hesitant', or 'Neutral'.",
+  "Answer this about the following text, is this user in favour of vaccines?"
+)
+
+# LLM backend use specification
+llm_use("ollama", "llama3.2:latest", seed = 100, .silent = TRUE)
+
+# new dataset with the LLM predictions incorporated
+new_posts_df <- posts_df %>%
+  
+  # ensure we have data
+  mutate(title = ifelse(title %in% c("", "\n"), NA, title)) %>%
+  filter(!is.na(title)) %>%
+  
+  # LLM call
+  llm_custom(title, prompt = prompt)
+```
+
+After merging all the new data sets for each search term, we can visualize the temporal trends towards vaccination in social media content. Additionally, we added key U.S. government policy and administration changes to the timeline, since these transitions can provide important context alongside the vaccines' perception and COVID-19 events.
+
+```{r, echo=FALSE}
+sm_data <- readRDS("sm_data.rds")
+
+# libraries
+library(lubridate)
+library(ggrepel)
+library(scales)
+```
+
+```{r, fig.height=7.5, fig.width=9.5}
+# save our data for the posterior plot
+timeline_plot <- sm_data %>%
+  
+  # format posts' dates
+  mutate(month = format(created, "%Y-%m")) %>%
+  
+  # calculate the number of pro-vaccine, vaccine-hesitant and neutral posts by date
+  group_by(month, .pred) %>%
+  summarise(n = n()) %>%
+  ungroup() %>%
+  mutate(month = ym(month))
+
+
+# create a data frame with key events
+key_events <- data.frame(
+  date = lubridate::ymd(c(
+    "2020-11-07", # Biden election called
+    "2020-12-11", # FDA EUA for Pfizer
+    "2020-12-18", # FDA EUA for Moderna
+    "2021-01-20", # Biden Inauguration
+    "2021-02-27", # J&J Vaccine EUA
+    "2021-07-01", # Delta variant becomes dominant
+    "2021-08-23", # Pfizer receives full FDA approval
+    "2021-11-19", # Boosters approved for all adults
+    "2021-12-01", # Omicron variant identified in US
+    "2022-09-18", # Biden declares "pandemic is over"
+    "2023-05-11",  # COVID emergency officially ends
+    "2025-01-20"  # Trump Inauguration
+  )),
+  event = c(
+    "Biden election called",
+    "FDA EUA for Pfizer",
+    "FDA EUA for Moderna",
+    "Biden Inauguration",
+    "J&J Vaccine EUA",
+    "Delta dominant",
+    "Pfizer full approval",
+    "Boosters for adults",
+    "Omicron in US",
+    "Biden: \"pandemic is over\"",
+    "COVID emergency ends",
+    "Trump Inauguration"
+  ),
+  y_position = c(100, 50, 70, 110, 35, 80, 40, 60, 55, 105, 85, 70),  # Adjust based on your data range
+  event_type = c(
+    "Political", "Medical", "Medical", "Political", "Medical", "Variant", "Medical", "Medical", "Variant", "Political", "Political", "Political"
+  )
+)
+
+
+# convert dates to first of month for plotting
+key_events$month <- floor_date(key_events$date, "month")
+
+
+# plot
+ggplot() +
+  
+  # add softer y-axis grid lines
+  geom_hline(yintercept = seq(0, 30, 5), 
+             color = "gray95", linewidth = 0.3)+
+  
+  # plot the sentiment lines
+  geom_line(data = timeline_plot, 
+            aes(x = month, y = n, color = .pred, group = .pred),
+            size = 1.2) +
+  geom_point(data = timeline_plot, 
+             aes(x = month, y = n, color = .pred, size = n),
+             alpha = 0.7) +
+  
+  # add event markers with different colors by type
+  geom_vline(data = key_events, 
+             aes(xintercept = as.numeric(month), color = event_type),
+             linetype = "dashed", alpha = 0.7) +
+  
+  # add event labels with color coding
+  geom_label_repel(data = key_events,
+                  aes(x = month, y = y_position, 
+                      label = event, 
+                      fill = event_type),
+                  box.padding = 0.5,
+                  point.padding = 0.3,
+                  force = 10,
+                  segment.color = "darkgray",
+                  color = "white",
+                  size = 3,
+                  alpha = 0.9) +
+  
+  # customize appearance
+  scale_color_manual(values = c("Pro-vaccine" = "#1b9e77", 
+                                "Neutral" = "#7570b3", 
+                                "Vaccine-hesitant" = "#d95f02",
+                                "Political" = "#e41a1c",
+                                "Medical" = "#377eb8",
+                                "Variant" = "#ff7f00"),
+                     name = "Sentiment/Event type") +
+  scale_fill_manual(values = c("Political" = "#e41a1c",
+                               "Medical" = "#377eb8",
+                               "Variant" = "#ff7f00"),
+                    name = "Event Type") +
+  scale_size(range = c(2, 8), guide = "none") +
+  scale_x_date(date_breaks = "6 months", 
+               date_labels = "%b\n%Y",
+               expand = expansion(mult = c(0.02, 0.08))) +
+  scale_y_continuous(breaks = seq(0, 30, 5)) +
+  
+  # add informative labels
+  labs(title = "Vaccine Sentiment on Social Media Over Time",
+       subtitle = "With key COVID-19, vaccine-related events and U.S. political changes",
+       x = "",
+       y = "Number of Reddit posts (136 posts extracted)") +
+  
+  # theme customization
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12, color = "darkgray"),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    legend.box = "vertical",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.major.y = element_line(color = "gray90", linewidth = 0.3),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+    axis.line.x = element_line(color = "gray50", linewidth = 0.5),
+    axis.title.y = element_text(hjust = 0),
+    axis.ticks.x = element_line(color = "gray50", linewidth = 0.5),
+    axis.ticks.length.x = unit(3, "pt"),
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20))
+```
+
+Taking into consideration potential limitations (e.g., 136 posts do not definitely represent broader public opinion), we can observe that vaccine discussion remained minimal until a dramatic spike in late 2024/early 2025, where vaccine-hesitant sentiment shows the largest increase. Pro-vaccine sentiment shows a smaller reactive increase.
+
+However, the data suggests vaccine discourse is more strongly influenced by political leadership changes than by medical or scientific announcements, which may be a cause of concern.
+
+Finally, our dataset includes an **engagement score** for each post, calculated as the difference between likes (*upvotes*) and dislikes (*downvotes*). Notably, among the **top 5 highest-scored posts**, three were classified as **vaccine-hesitant**, with the two most highly engaged posts also falling into this category.
+
+Below is the breakdown of the top-performing posts by score and sentiment classification:
+
+```{r, echo=FALSE}
+# top posts by score
+sm_data %>%
+  # group_by(.pred) %>%
+  top_n(5, score) %>%
+  select(.pred, score, title) %>%
+  arrange(desc(score)) %>%
+  rename(`LLM prediction` = .pred,
+         Title = title,
+         Score = score) %>%
+  paged_table(options = list(rows.print = 5, cols.print = 3))
+```
+
+This trend suggests that vaccine-hesitant content generates disproportionately high engagement, potentially reflecting either algorithmic amplification or strong audience polarization. Further analysis could explore whether these patterns correlate with regional vaccination rates or misinformation prevalence.

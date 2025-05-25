@@ -1,5 +1,5 @@
 ---
-title: "A Data-Driven Analysis of the Global Measles Emergency"
+title: "Global Measles Emergency: Data Analysis"
 ---
 
 ::: callout-caution

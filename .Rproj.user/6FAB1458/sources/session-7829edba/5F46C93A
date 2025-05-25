@@ -3,7 +3,7 @@
     "path": "~/Downloads/R/measles-analysis/_quarto.yml",
     "project_path": "_quarto.yml",
     "type": "yaml",
-    "hash": "0",
+    "hash": "2222139118",
     "contents": "",
     "dirty": false,
     "created": 1748194464214.0,
@@ -12,15 +12,15 @@
     "properties": {
         "source_window_id": "",
         "Source": "Source",
-        "cursorPosition": "5,10",
-        "scrollLine": "1"
+        "cursorPosition": "15,4",
+        "scrollLine": "0"
     },
     "folds": "",
-    "lastKnownWriteTime": 1748194763,
+    "lastKnownWriteTime": 1748197919,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1748194763247,
+    "last_content_update": 1748197919601,
     "read_only": false,
     "read_only_alternatives": []
 }

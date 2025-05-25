@@ -1,11 +1,47 @@
 ---
-author:
-  - name: Daniel Gallardo
-    affiliations:
-      - name: Health Economics and Epidemiology, Insights, Evidence & Value Division, ICON plc.
-    email: daniel.gallardogomez200@gmail.com
-    twitter: https://twitter.com/DanielG12754470
-    github: https://github.com/dgalgom
-
-date: "`r Sys.Date()`"
+title: "About Me"
+format:
+  html:
+    toc: false
+    theme: flatly
+    css: styles.css
 ---
+
+![Daniel Gallardo, PhD - Senior Consultant; Health Economics and Epidemiology; Insights, Evidence & Value Division, ICON plc.](daniel_foto.png){width=200px .rounded-circle}
+
+## Hi there! I'm Daniel Gallardo 👋
+
+I'm a data scientist passionate about epidemiology, statistical modeling, and public health analytics. 
+I use R, Quarto, and GitHub to tell compelling data stories that drive real-world impact.
+
+### 📫 Contact Me
+
+- 📧 [Gmail](daniel_gallardogomez200\@gmail.com)
+
+- 💻 [GitHub](<https://github.com/dgalgom>)
+
+- 🔗 [LinkedIn](<https://www.linkedin.com/in/daniel-gallardo-gómez-b32863138/>)
+
+---
+
+## 🧠 Skills
+
+- R & R Markdown / Quarto
+
+- Epidemiological modeling
+
+- Data visualization (ggplot2, plotly)
+
+- Git/GitHub workflows
+
+- Reproducible research
+
+## 🎯 Interests
+
+- Infectious disease dynamics
+
+- Bayesian statistics
+
+- Open science & data sharing
+
+- Science communication

@@ -3,7 +3,7 @@
     "path": "~/Downloads/R/measles-analysis/index.qmd",
     "project_path": "index.qmd",
     "type": "quarto_markdown",
-    "hash": "0",
+    "hash": "773576453",
     "contents": "",
     "dirty": false,
     "created": 1748194463947.0,
@@ -16,16 +16,16 @@
         "Source": "Source",
         "docOutlineVisible": "1",
         "rmdVisualCollapsedChunks": "",
-        "rmdVisualModeLocation": "68:4.800000190734863",
+        "rmdVisualModeLocation": "53:0",
         "cursorPosition": "0,0",
         "scrollLine": "0"
     },
     "folds": "",
-    "lastKnownWriteTime": 1748194902,
+    "lastKnownWriteTime": 1748197858,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1748194902924,
+    "last_content_update": 1748197858546,
     "read_only": false,
     "read_only_alternatives": []
 }
